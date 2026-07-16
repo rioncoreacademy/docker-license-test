@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>License Admin</title>
+<style>
+  :root {
+    --bg: #f5f6f8; --surface: #ffffff; --border: #dfe3e8; --ink: #1c2430;
+    --muted: #6b7684; --accent: #2f6fed; --accent-ink: #ffffff;
+    --ok: #1a7f4b; --ok-bg: #e6f6ee; --err: #b3261e; --err-bg: #fdecea;
+    --mono: ui-monospace, "SFMono-Regular", Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font-family: -apple-system, "Segoe UI", sans-serif; font-size: 14.5px;
+    line-height: 1.55; padding: 32px 20px 80px;
+  }
+  .wrap { max-width: 640px; margin: 0 auto; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .sub { color: var(--muted); font-size: 13px; margin-bottom: 28px; }
+  .card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; padding: 22px 24px; margin-bottom: 20px;
+  }
+  .card h2 { font-size: 15px; margin: 0 0 16px; }
+  label { display: block; font-size: 12.5px; color: var(--muted); margin: 12px 0 4px; }
+  label:first-of-type { margin-top: 0; }
+  input {
+    width: 100%; padding: 9px 10px; border: 1px solid var(--border);
+    border-radius: 6px; font-size: 14px; font-family: inherit; background: #fff;
+  }
+  input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  .row { display: flex; gap: 12px; }
+  .row > div { flex: 1; }
+  button {
+    margin-top: 16px; background: var(--accent); color: var(--accent-ink);
+    border: none; border-radius: 6px; padding: 10px 18px; font-size: 14px;
+    font-weight: 600; cursor: pointer;
+  }
+  button:hover { filter: brightness(1.08); }
+  button:disabled { opacity: .5; cursor: default; }
+  button.secondary { background: transparent; color: var(--accent); border: 1px solid var(--border); }
+  .result {
+    margin-top: 18px; border-radius: 8px; padding: 16px 18px; font-size: 13.5px;
+    display: none;
+  }
+  .result.show { display: block; }
+  .result.ok { background: var(--ok-bg); border: 1px solid #b7e4cb; }
+  .result.err { background: var(--err-bg); border: 1px solid #f3c1bd; color: var(--err); }
+  .key-line {
+    font-family: var(--mono); font-size: 17px; font-weight: 700;
+    background: #fff; border: 1px solid var(--border); border-radius: 6px;
+    padding: 10px 12px; margin: 8px 0 14px; display: flex; align-items: center;
+    justify-content: space-between; gap: 10px;
+  }
+  .key-line button { margin: 0; padding: 5px 10px; font-size: 12px; }
+  .instructions {
+    background: #fff; border: 1px solid var(--border); border-radius: 6px;
+    padding: 12px 14px; font-family: var(--mono); font-size: 12.5px;
+    white-space: pre-wrap; word-break: break-all; color: var(--ink);
+  }
+  .note { color: var(--muted); font-size: 12px; margin-top: 8px; }
+  .field-error { color: var(--err); font-size: 12px; margin-top: 4px; }
+  table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 12.5px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 600; font-size: 11.5px; text-transform: uppercase; }
+  .pill { display: inline-block; padding: 2px 9px; border-radius: 20px; font-size: 12px; font-weight: 600; }
+  .pill.active { background: var(--ok-bg); color: var(--ok); }
+  .pill.revoked, .pill.expired { background: var(--err-bg); color: var(--err); }
+  #tokenGate { max-width: 360px; margin: 80px auto; text-align: center; }
+  #tokenGate input { text-align: center; }
+</style>
+</head>
+<body>
+
+<div id="tokenGate" class="wrap">
+  <div class="card">
+    <h2>Admin token</h2>
+    <input id="tokenInput" type="password" placeholder="Paste ADMIN_TOKEN">
+    <div id="tokenError" class="field-error"></div>
+    <button id="tokenSubmit" style="width:100%">Continue</button>
+  </div>
+</div>
+
+<div id="app" class="wrap" style="display:none">
+  <h1>License Admin</h1>
+  <div class="sub">Generate and look up Tarang2p1 license keys. <a href="#" id="changeToken">Change token</a></div>
+
+  <div class="card">
+    <h2>Generate a license</h2>
+    <label for="genEmail">Customer email</label>
+    <input id="genEmail" type="email" placeholder="customer@example.com">
+
+    <div class="row">
+      <div>
+        <label for="genExpires">Expires</label>
+        <input id="genExpires" type="date">
+      </div>
+      <div>
+        <label for="genSeats">Seats (machines)</label>
+        <input id="genSeats" type="number" min="1" value="1">
+      </div>
+    </div>
+
+    <button id="genSubmit">Generate license</button>
+    <div id="genResult" class="result"></div>
+  </div>
+
+  <div class="card">
+    <h2>Look up a license</h2>
+    <label for="lookupKey">License key</label>
+    <input id="lookupKey" type="text" placeholder="TDP1-XXXX-XXXX-XXXX-XXXX">
+    <button id="lookupSubmit" class="secondary">Look up</button>
+    <div id="lookupResult" class="result"></div>
+  </div>
+</div>
+
+<script>
+const TOKEN_KEY = 'license_admin_token';
+
+function apiOrigin() { return window.location.origin; }
+
+function getToken() { return localStorage.getItem(TOKEN_KEY) || ''; }
+function setToken(t) { localStorage.setItem(TOKEN_KEY, t); }
+function clearToken() { localStorage.removeItem(TOKEN_KEY); }
+
+async function api(path, { method = 'GET', body } = {}) {
+  const res = await fetch(apiOrigin() + path, {
+    method,
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Admin-Token': getToken(),
+    },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const data = await res.json().catch(() => ({ ok: false, error: 'bad_response' }));
+  return { httpStatus: res.status, ...data };
+}
+
+function showGate() {
+  document.getElementById('tokenGate').style.display = 'block';
+  document.getElementById('app').style.display = 'none';
+}
+function showApp() {
+  document.getElementById('tokenGate').style.display = 'none';
+  document.getElementById('app').style.display = 'block';
+}
+
+async function verifyTokenAndEnter(token) {
+  setToken(token);
+  // Cheapest way to confirm the token works: an intentionally-empty lookup.
+  // 400 (missing_license_key) = token accepted, just no key given.
+  // 401 = token rejected.
+  const r = await api('/admin/lookup?key=');
+  if (r.httpStatus === 401) {
+    clearToken();
+    document.getElementById('tokenError').textContent = 'Incorrect token.';
+    return false;
+  }
+  if (r.httpStatus === 403) {
+    document.getElementById('tokenError').textContent = 'Admin page is disabled on the server (ADMIN_TOKEN not set).';
+    return false;
+  }
+  return true;
+}
+
+document.getElementById('tokenSubmit').addEventListener('click', async () => {
+  const token = document.getElementById('tokenInput').value.trim();
+  if (!token) return;
+  document.getElementById('tokenError').textContent = '';
+  if (await verifyTokenAndEnter(token)) showApp();
+});
+
+document.getElementById('changeToken').addEventListener('click', (e) => {
+  e.preventDefault();
+  clearToken();
+  showGate();
+});
+
+document.getElementById('genSubmit').addEventListener('click', async () => {
+  const email = document.getElementById('genEmail').value.trim();
+  const expires = document.getElementById('genExpires').value;
+  const seats = document.getElementById('genSeats').value || '1';
+  const btn = document.getElementById('genSubmit');
+  const out = document.getElementById('genResult');
+
+  if (!email || !expires) {
+    out.className = 'result err show';
+    out.textContent = 'Email and expiry date are required.';
+    return;
+  }
+
+  btn.disabled = true;
+  const r = await api('/admin/generate', { method: 'POST', body: { email, expires, seats } });
+  btn.disabled = false;
+
+  if (r.httpStatus === 401) { clearToken(); showGate(); return; }
+
+  if (!r.ok) {
+    out.className = 'result err show';
+    out.textContent = 'Could not generate license: ' + (r.error || 'unknown error');
+    return;
+  }
+
+  const runCmd = `Tarang2p1.exe start -licensekey ${r.license_key} -licenseapi ${apiOrigin()}`;
+  out.className = 'result ok show';
+  out.innerHTML = `
+    <div>License created for <strong>${r.customer_email}</strong> — ${r.seats} seat(s), expires ${r.expiry_date}.</div>
+    <div class="key-line"><span>${r.license_key}</span>
+      <button type="button" onclick="navigator.clipboard.writeText('${r.license_key}')">Copy key</button>
+    </div>
+    <div>Send this to the customer along with <strong>Tarang2p1.exe</strong>. They run:</div>
+    <div class="instructions">${runCmd}</div>
+    <div class="note">This seat locks to whichever machine activates it first — sharing the key with a second
+    person won't work once the seat is used. Local testing note: if Tarang2p1.exe is pulling an image on
+    this same machine, use <code>http://host.docker.internal:${window.location.port || 80}</code> instead of
+    ${apiOrigin()} for -licenseapi.</div>
+  `;
+});
+
+document.getElementById('lookupSubmit').addEventListener('click', async () => {
+  const key = document.getElementById('lookupKey').value.trim();
+  const out = document.getElementById('lookupResult');
+  if (!key) return;
+
+  const r = await api('/admin/lookup?key=' + encodeURIComponent(key));
+  if (r.httpStatus === 401) { clearToken(); showGate(); return; }
+
+  if (!r.ok) {
+    out.className = 'result err show';
+    out.textContent = r.error === 'license_not_found' ? 'No license found with that key.' : ('Error: ' + r.error);
+    return;
+  }
+
+  const state = r.status !== 'active' ? 'revoked' : (r.expired ? 'expired' : 'active');
+  const label = state === 'active' ? 'Active' : (state === 'expired' ? 'Expired' : 'Revoked');
+
+  let rows = '';
+  if (r.activations.length === 0) {
+    rows = '<tr><td colspan="3" style="color:var(--muted)">Not activated on any machine yet.</td></tr>';
+  } else {
+    for (const a of r.activations) {
+      rows += `<tr><td>${a.fingerprint.slice(0, 12)}…</td><td>${a.activated_at}</td><td>${a.last_seen_at}</td></tr>`;
+    }
+  }
+
+  out.className = 'result ok show';
+  out.innerHTML = `
+    <div><span class="pill ${state}">${label}</span> &nbsp; <strong>${r.customer_email}</strong></div>
+    <div class="note">Expires ${r.expiry_date} &middot; ${r.activations_used} / ${r.max_activations} seat(s) used &middot; created ${r.created_at}</div>
+    <table>
+      <thead><tr><th>Fingerprint</th><th>Activated</th><th>Last seen</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+  `;
+});
+
+// Skip the gate if a token's already saved and still valid.
+(async () => {
+  if (getToken()) {
+    const r = await api('/admin/lookup?key=');
+    if (r.httpStatus !== 401) { showApp(); return; }
+    clearToken();
+  }
+  showGate();
+})();
+</script>
+</body>
+</html>

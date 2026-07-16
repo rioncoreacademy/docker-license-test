@@ -39,13 +39,23 @@ once you exceed `max_activations`, and with `TEST-EXPIRED-0001` to see
 
 ## Endpoints
 
-| Endpoint    | Method | Body                              | Notes                                   |
-|-------------|--------|------------------------------------|------------------------------------------|
-| `/activate` | POST   | `{license_key, fingerprint}`       | Idempotent — re-activating the same machine returns `already_activated: true` |
-| `/validate` | POST   | `{license_key, fingerprint}`       | Called on every app startup |
+| Endpoint         | Method | Body/Query                    | Notes                                   |
+|------------------|--------|--------------------------------|------------------------------------------|
+| `/activate`      | POST   | `{license_key, fingerprint}`   | Idempotent — re-activating the same machine returns `already_activated: true` |
+| `/validate`      | POST   | `{license_key, fingerprint}`   | Called on every app startup |
+| `/admin/generate`| POST   | `{email, expires, seats?}`     | Requires `X-Admin-Token` header — see below |
+| `/admin/lookup`  | GET    | `?key=...`                     | Requires `X-Admin-Token` header — see below |
 
 ## Generate a license key
 
+**Web UI** — open `http://localhost:8080/admin.html`, paste your
+`ADMIN_TOKEN` (set in `.env`), and use the form. No Docker/CLI knowledge
+needed — this is the page to hand off if someone else is issuing licenses.
+It shows the generated key plus the exact `Tarang2p1.exe` command to give
+the customer, and has a second form to look up any key's status (active/
+revoked/expired, seats used, which machines have activated it).
+
+**CLI** (same underlying logic, via `AdminController`):
 ```
 docker compose exec api php bin/generate-license.php --email=customer@example.com --expires=2027-12-31
 ```
@@ -54,6 +64,9 @@ docker compose exec api php bin/generate-license.php --email=customer@example.co
 machine (a second machine's fingerprint gets `activation_limit_reached`
 once the single seat is taken). Pass `--seats=N` to issue a multi-seat key
 instead, and `--prefix=XXXX` to change the key's prefix (default `TDP1`).
+
+`ADMIN_TOKEN` in `.env`/`config.php` protects both `/admin/*` endpoints —
+leave it blank to disable the admin page entirely (both return `403`).
 
 ## Moving to Hostinger later
 

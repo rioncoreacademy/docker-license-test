@@ -6,3 +6,6 @@ define('DB_HOST', 'localhost');
 define('DB_NAME', 'u123456789_licensing');
 define('DB_USER', 'u123456789_license_app');
 define('DB_PASS', 'change-me');
+
+// Protects /admin/generate and /admin/lookup (public/admin.html).
+define('ADMIN_TOKEN', 'change-me-to-something-random');

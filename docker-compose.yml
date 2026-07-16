@@ -26,6 +26,7 @@ services:
       DB_NAME: licensing
       DB_USER: license_app
       DB_PASS: ${DB_PASS}
+      ADMIN_TOKEN: ${ADMIN_TOKEN}
     ports:
       - "8080:80"
     depends_on:
