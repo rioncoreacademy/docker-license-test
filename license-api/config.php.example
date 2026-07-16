@@ -1,0 +1,8 @@
+<?php
+// Copy this file to config.php and fill in the values from hPanel > Databases.
+// config.php is gitignored -- never commit real credentials.
+
+define('DB_HOST', 'localhost');
+define('DB_NAME', 'u123456789_licensing');
+define('DB_USER', 'u123456789_license_app');
+define('DB_PASS', 'change-me');

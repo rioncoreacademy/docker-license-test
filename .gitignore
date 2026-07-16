@@ -1,0 +1,4 @@
+.env
+license-api/config.php
+__pycache__/
+*.pyc
