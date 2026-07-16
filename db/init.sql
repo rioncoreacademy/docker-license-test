@@ -18,6 +18,15 @@ CREATE TABLE IF NOT EXISTS activations (
     UNIQUE KEY unique_activation (license_id, fingerprint)
 );
 
+CREATE TABLE IF NOT EXISTS license_events (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    license_id INT NOT NULL,
+    event_type ENUM('created', 'extended', 'revoked', 'reactivated') NOT NULL,
+    detail VARCHAR(255) NOT NULL DEFAULT '',
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (license_id) REFERENCES licenses(id) ON DELETE CASCADE
+);
+
 -- Test license: 2 activation seats, expires far in the future.
 -- Key is plaintext here only because this is a disposable local test DB.
 INSERT INTO licenses (license_key, customer_email, max_activations, expiry_date, status)

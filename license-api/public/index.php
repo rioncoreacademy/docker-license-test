@@ -89,4 +89,23 @@ if ($method === 'GET' && $path === '/admin/lookup') {
     json_out($result['status'], $result['body']);
 }
 
+$adminActions = ['/admin/extend' => 'extend', '/admin/revoke' => 'revoke', '/admin/reactivate' => 'reactivate'];
+if ($method === 'POST' && isset($adminActions[$path])) {
+    require_admin_token();
+    $raw = file_get_contents('php://input');
+    $body = json_decode($raw, true);
+    if (!is_array($body)) {
+        json_out(400, ['ok' => false, 'error' => 'invalid_json_body']);
+    }
+
+    $controller = new AdminController();
+    $action = $adminActions[$path];
+    try {
+        $result = $controller->$action($body);
+    } catch (Throwable $e) {
+        json_out(500, ['ok' => false, 'error' => 'server_error']);
+    }
+    json_out($result['status'], $result['body']);
+}
+
 json_out(404, ['ok' => false, 'error' => 'not_found']);

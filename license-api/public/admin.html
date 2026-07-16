@@ -9,6 +9,7 @@
     --bg: #f5f6f8; --surface: #ffffff; --border: #dfe3e8; --ink: #1c2430;
     --muted: #6b7684; --accent: #2f6fed; --accent-ink: #ffffff;
     --ok: #1a7f4b; --ok-bg: #e6f6ee; --err: #b3261e; --err-bg: #fdecea;
+    --warn: #8a5a00; --warn-bg: #fff4e0;
     --mono: ui-monospace, "SFMono-Regular", Consolas, monospace;
   }
   * { box-sizing: border-box; }
@@ -42,6 +43,9 @@
   button:hover { filter: brightness(1.08); }
   button:disabled { opacity: .5; cursor: default; }
   button.secondary { background: transparent; color: var(--accent); border: 1px solid var(--border); }
+  button.danger { background: transparent; color: var(--err); border: 1px solid #f3c1bd; }
+  button.small { margin: 0; padding: 6px 12px; font-size: 12.5px; }
+  .btn-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 14px; }
   .result {
     margin-top: 18px; border-radius: 8px; padding: 16px 18px; font-size: 13.5px;
     display: none;
@@ -49,6 +53,11 @@
   .result.show { display: block; }
   .result.ok { background: var(--ok-bg); border: 1px solid #b7e4cb; }
   .result.err { background: var(--err-bg); border: 1px solid #f3c1bd; color: var(--err); }
+  .warn-box {
+    background: var(--warn-bg); border: 1px solid #f0d999; color: var(--warn);
+    border-radius: 8px; padding: 12px 14px; margin-bottom: 14px; font-size: 13px;
+  }
+  .warn-box ul { margin: 6px 0 0; padding-left: 18px; }
   .key-line {
     font-family: var(--mono); font-size: 17px; font-weight: 700;
     background: #fff; border: 1px solid var(--border); border-radius: 6px;
@@ -66,9 +75,13 @@
   table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 12.5px; }
   th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); }
   th { color: var(--muted); font-weight: 600; font-size: 11.5px; text-transform: uppercase; }
+  h3.sec { font-size: 12.5px; text-transform: uppercase; letter-spacing: .03em; color: var(--muted); margin: 18px 0 4px; }
   .pill { display: inline-block; padding: 2px 9px; border-radius: 20px; font-size: 12px; font-weight: 600; }
   .pill.active { background: var(--ok-bg); color: var(--ok); }
   .pill.revoked, .pill.expired { background: var(--err-bg); color: var(--err); }
+  .pill.matched { background: var(--warn-bg); color: var(--warn); font-size: 10.5px; margin-left: 6px; }
+  .inline-form { display: none; margin-top: 12px; padding-top: 12px; border-top: 1px dashed var(--border); }
+  .inline-form.show { display: block; }
   #tokenGate { max-width: 360px; margin: 80px auto; text-align: center; }
   #tokenGate input { text-align: center; }
 </style>
@@ -104,6 +117,9 @@
       </div>
     </div>
 
+    <label for="genFingerprint">Customer's machine fingerprint (optional)</label>
+    <input id="genFingerprint" type="text" placeholder="64-character hash from Get-Fingerprint.ps1 -- checks for a repeat customer even under a new email">
+
     <button id="genSubmit">Generate license</button>
     <div id="genResult" class="result"></div>
   </div>
@@ -121,18 +137,15 @@
 const TOKEN_KEY = 'license_admin_token';
 
 function apiOrigin() { return window.location.origin; }
-
 function getToken() { return localStorage.getItem(TOKEN_KEY) || ''; }
 function setToken(t) { localStorage.setItem(TOKEN_KEY, t); }
 function clearToken() { localStorage.removeItem(TOKEN_KEY); }
+function esc(s) { return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
 async function api(path, { method = 'GET', body } = {}) {
   const res = await fetch(apiOrigin() + path, {
     method,
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Admin-Token': getToken(),
-    },
+    headers: { 'Content-Type': 'application/json', 'X-Admin-Token': getToken() },
     body: body ? JSON.stringify(body) : undefined,
   });
   const data = await res.json().catch(() => ({ ok: false, error: 'bad_response' }));
@@ -150,9 +163,6 @@ function showApp() {
 
 async function verifyTokenAndEnter(token) {
   setToken(token);
-  // Cheapest way to confirm the token works: an intentionally-empty lookup.
-  // 400 (missing_license_key) = token accepted, just no key given.
-  // 401 = token rejected.
   const r = await api('/admin/lookup?key=');
   if (r.httpStatus === 401) {
     clearToken();
@@ -183,6 +193,7 @@ document.getElementById('genSubmit').addEventListener('click', async () => {
   const email = document.getElementById('genEmail').value.trim();
   const expires = document.getElementById('genExpires').value;
   const seats = document.getElementById('genSeats').value || '1';
+  const fingerprint = document.getElementById('genFingerprint').value.trim();
   const btn = document.getElementById('genSubmit');
   const out = document.getElementById('genResult');
 
@@ -193,23 +204,41 @@ document.getElementById('genSubmit').addEventListener('click', async () => {
   }
 
   btn.disabled = true;
-  const r = await api('/admin/generate', { method: 'POST', body: { email, expires, seats } });
+  const body = { email, expires, seats };
+  if (fingerprint) body.fingerprint = fingerprint;
+  const r = await api('/admin/generate', { method: 'POST', body });
   btn.disabled = false;
 
   if (r.httpStatus === 401) { clearToken(); showGate(); return; }
 
   if (!r.ok) {
     out.className = 'result err show';
-    out.textContent = 'Could not generate license: ' + (r.error || 'unknown error');
+    out.textContent = r.error === 'malformed_fingerprint'
+      ? 'That fingerprint doesn\'t look right (should be a 64-character hex string).'
+      : 'Could not generate license: ' + (r.error || 'unknown error');
     return;
+  }
+
+  let warn = '';
+  if (r.existing_licenses && r.existing_licenses.length > 0) {
+    const items = r.existing_licenses.map(l => {
+      const why = l.matched_by === 'fingerprint' ? 'same machine, different email'
+                : l.matched_by === 'both' ? 'same email and same machine'
+                : 'same email';
+      return `<li><code>${esc(l.license_key)}</code> — ${esc(l.status)}, expires ${esc(l.expiry_date)} (${why})</li>`;
+    }).join('');
+    warn = `<div class="warn-box"><strong>Heads up:</strong> this customer/machine already has ${r.existing_licenses.length} license(s):
+      <ul>${items}</ul>
+      Consider extending one of those instead of tracking two.</div>`;
   }
 
   const runCmd = `Tarang2p1.exe start -licensekey ${r.license_key} -licenseapi ${apiOrigin()}`;
   out.className = 'result ok show';
   out.innerHTML = `
-    <div>License created for <strong>${r.customer_email}</strong> — ${r.seats} seat(s), expires ${r.expiry_date}.</div>
+    ${warn}
+    <div>License created for <strong>${esc(r.customer_email)}</strong> — ${r.seats} seat(s), expires ${r.expiry_date}.</div>
     <div class="key-line"><span>${r.license_key}</span>
-      <button type="button" onclick="navigator.clipboard.writeText('${r.license_key}')">Copy key</button>
+      <button type="button" class="small" onclick="navigator.clipboard.writeText('${r.license_key}')">Copy key</button>
     </div>
     <div>Send this to the customer along with <strong>Tarang2p1.exe</strong>. They run:</div>
     <div class="instructions">${runCmd}</div>
@@ -220,11 +249,8 @@ document.getElementById('genSubmit').addEventListener('click', async () => {
   `;
 });
 
-document.getElementById('lookupSubmit').addEventListener('click', async () => {
-  const key = document.getElementById('lookupKey').value.trim();
+async function runLookup(key) {
   const out = document.getElementById('lookupResult');
-  if (!key) return;
-
   const r = await api('/admin/lookup?key=' + encodeURIComponent(key));
   if (r.httpStatus === 401) { clearToken(); showGate(); return; }
 
@@ -237,24 +263,83 @@ document.getElementById('lookupSubmit').addEventListener('click', async () => {
   const state = r.status !== 'active' ? 'revoked' : (r.expired ? 'expired' : 'active');
   const label = state === 'active' ? 'Active' : (state === 'expired' ? 'Expired' : 'Revoked');
 
-  let rows = '';
-  if (r.activations.length === 0) {
-    rows = '<tr><td colspan="3" style="color:var(--muted)">Not activated on any machine yet.</td></tr>';
-  } else {
-    for (const a of r.activations) {
-      rows += `<tr><td>${a.fingerprint.slice(0, 12)}…</td><td>${a.activated_at}</td><td>${a.last_seen_at}</td></tr>`;
-    }
+  let actRows = r.activations.length
+    ? r.activations.map(a => `<tr><td>${esc(a.fingerprint.slice(0, 12))}…</td><td>${esc(a.activated_at)}</td><td>${esc(a.last_seen_at)}</td></tr>`).join('')
+    : '<tr><td colspan="3" style="color:var(--muted)">Not activated on any machine yet.</td></tr>';
+
+  let relatedHtml = '';
+  if (r.related_by_fingerprint.length > 0) {
+    const items = r.related_by_fingerprint.map(l =>
+      `<li><code>${esc(l.license_key)}</code> — ${esc(l.customer_email)}, ${esc(l.status)}, expires ${esc(l.expiry_date)}</li>`
+    ).join('');
+    relatedHtml = `<div class="warn-box"><strong>Same machine also holds:</strong><ul>${items}</ul></div>`;
   }
+
+  let eventRows = r.events.length
+    ? r.events.map(e => `<tr><td>${esc(e.event_type)}</td><td>${esc(e.detail)}</td><td>${esc(e.created_at)}</td></tr>`).join('')
+    : '<tr><td colspan="3" style="color:var(--muted)">No events recorded.</td></tr>';
+
+  const revokeBtn = state === 'revoked'
+    ? `<button type="button" class="small secondary" data-action="reactivate">Reactivate</button>`
+    : `<button type="button" class="small danger" data-action="revoke">Revoke</button>`;
 
   out.className = 'result ok show';
   out.innerHTML = `
-    <div><span class="pill ${state}">${label}</span> &nbsp; <strong>${r.customer_email}</strong></div>
+    ${relatedHtml}
+    <div><span class="pill ${state}">${label}</span> &nbsp; <strong>${esc(r.customer_email)}</strong></div>
     <div class="note">Expires ${r.expiry_date} &middot; ${r.activations_used} / ${r.max_activations} seat(s) used &middot; created ${r.created_at}</div>
-    <table>
-      <thead><tr><th>Fingerprint</th><th>Activated</th><th>Last seen</th></tr></thead>
-      <tbody>${rows}</tbody>
-    </table>
+
+    <h3 class="sec">Activations</h3>
+    <table><thead><tr><th>Fingerprint</th><th>Activated</th><th>Last seen</th></tr></thead><tbody>${actRows}</tbody></table>
+
+    <h3 class="sec">History</h3>
+    <table><thead><tr><th>Event</th><th>Detail</th><th>When</th></tr></thead><tbody>${eventRows}</tbody></table>
+
+    <div class="btn-row">
+      <button type="button" class="small secondary" data-action="extend">Extend</button>
+      ${revokeBtn}
+    </div>
+
+    <div id="extendForm" class="inline-form">
+      <label for="extendExpires">New expiry date</label>
+      <input id="extendExpires" type="date" value="${r.expiry_date}">
+      <label for="extendSeats">Seats (leave to keep current: ${r.max_activations})</label>
+      <input id="extendSeats" type="number" min="1" placeholder="${r.max_activations}">
+      <button type="button" class="small" id="extendConfirm">Confirm extend</button>
+    </div>
   `;
+
+  out.dataset.key = r.license_key;
+
+  out.querySelector('[data-action="extend"]')?.addEventListener('click', () => {
+    document.getElementById('extendForm').classList.toggle('show');
+  });
+  out.querySelector('#extendConfirm')?.addEventListener('click', async () => {
+    const expires = document.getElementById('extendExpires').value;
+    const seatsVal = document.getElementById('extendSeats').value;
+    if (!expires) return;
+    const body = { license_key: out.dataset.key, expires };
+    if (seatsVal) body.seats = seatsVal;
+    const er = await api('/admin/extend', { method: 'POST', body });
+    if (er.httpStatus === 401) { clearToken(); showGate(); return; }
+    if (er.ok) runLookup(out.dataset.key);
+  });
+  out.querySelector('[data-action="revoke"]')?.addEventListener('click', async () => {
+    if (!confirm('Revoke this license? The customer will lose access on their next check-in.')) return;
+    const rr = await api('/admin/revoke', { method: 'POST', body: { license_key: out.dataset.key } });
+    if (rr.httpStatus === 401) { clearToken(); showGate(); return; }
+    if (rr.ok) runLookup(out.dataset.key);
+  });
+  out.querySelector('[data-action="reactivate"]')?.addEventListener('click', async () => {
+    const rr = await api('/admin/reactivate', { method: 'POST', body: { license_key: out.dataset.key } });
+    if (rr.httpStatus === 401) { clearToken(); showGate(); return; }
+    if (rr.ok) runLookup(out.dataset.key);
+  });
+}
+
+document.getElementById('lookupSubmit').addEventListener('click', () => {
+  const key = document.getElementById('lookupKey').value.trim();
+  if (key) runLookup(key);
 });
 
 // Skip the gate if a token's already saved and still valid.
