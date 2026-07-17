@@ -27,6 +27,7 @@ services:
       DB_USER: license_app
       DB_PASS: ${DB_PASS}
       ADMIN_TOKEN: ${ADMIN_TOKEN}
+      DEFAULT_ENCRYPTION_KEY: ${DEFAULT_ENCRYPTION_KEY}
     ports:
       - "8080:80"
     depends_on:

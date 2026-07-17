@@ -89,6 +89,36 @@ if ($method === 'GET' && $path === '/admin/lookup') {
     json_out($result['status'], $result['body']);
 }
 
+// ── admin: products (folders + their decryption keys, see public/admin.html) ─
+if ($method === 'GET' && $path === '/admin/products') {
+    require_admin_token();
+
+    $controller = new AdminController();
+    try {
+        $result = $controller->listProducts();
+    } catch (Throwable $e) {
+        json_out(500, ['ok' => false, 'error' => 'server_error']);
+    }
+    json_out($result['status'], $result['body']);
+}
+
+if ($method === 'POST' && $path === '/admin/products') {
+    require_admin_token();
+    $raw = file_get_contents('php://input');
+    $body = json_decode($raw, true);
+    if (!is_array($body)) {
+        json_out(400, ['ok' => false, 'error' => 'invalid_json_body']);
+    }
+
+    $controller = new AdminController();
+    try {
+        $result = $controller->createProduct($body);
+    } catch (Throwable $e) {
+        json_out(500, ['ok' => false, 'error' => 'server_error']);
+    }
+    json_out($result['status'], $result['body']);
+}
+
 $adminActions = ['/admin/extend' => 'extend', '/admin/revoke' => 'revoke', '/admin/reactivate' => 'reactivate'];
 if ($method === 'POST' && isset($adminActions[$path])) {
     require_admin_token();

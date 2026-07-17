@@ -1,11 +1,32 @@
+-- A product is a folder inside tarang2p1-files plus the one encryption key
+-- that unlocks it. Folder-scoped licenses point at a product; the key lives
+-- here (not on the license row) because encrypt_lab.sh encrypts a folder's
+-- .v.enc files ONCE with ONE key -- every license unlocking that same
+-- content must resolve to the same key. folder_path '' means "whole repo"
+-- (not actually used by any product row today -- that's what a NULL
+-- licenses.product_id already means, see below).
+CREATE TABLE IF NOT EXISTS products (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    slug VARCHAR(64) NOT NULL UNIQUE,
+    name VARCHAR(255) NOT NULL DEFAULT '',
+    folder_path VARCHAR(255) NOT NULL UNIQUE,
+    encryption_key VARCHAR(255) NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS licenses (
     id INT AUTO_INCREMENT PRIMARY KEY,
     license_key VARCHAR(64) NOT NULL UNIQUE,
     customer_email VARCHAR(255) NOT NULL,
     max_activations INT NOT NULL DEFAULT 1,
+    -- NULL = legacy/full-access license: falls back to DEFAULT_ENCRYPTION_KEY
+    -- and no folder restriction (whole tarang2p1-files repo), matching every
+    -- license issued before products existed.
+    product_id INT NULL,
     expiry_date DATE NOT NULL,
     status ENUM('active', 'revoked') NOT NULL DEFAULT 'active',
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE SET NULL
 );
 
 CREATE TABLE IF NOT EXISTS activations (

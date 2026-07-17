@@ -26,7 +26,7 @@ class LicenseController
         if ($stmt->fetch()) {
             $db->prepare('UPDATE activations SET last_seen_at = NOW() WHERE license_id = ? AND fingerprint = ?')
                 ->execute([$license['id'], $fingerprint]);
-            return ['status' => 200, 'body' => ['ok' => true, 'already_activated' => true]];
+            return ['status' => 200, 'body' => ['ok' => true, 'already_activated' => true] + $this->resolveProductFields($license)];
         }
 
         $stmt = $db->prepare('SELECT COUNT(*) AS n FROM activations WHERE license_id = ?');
@@ -40,7 +40,7 @@ class LicenseController
         $db->prepare('INSERT INTO activations (license_id, fingerprint) VALUES (?, ?)')
             ->execute([$license['id'], $fingerprint]);
 
-        return ['status' => 200, 'body' => ['ok' => true, 'already_activated' => false]];
+        return ['status' => 200, 'body' => ['ok' => true, 'already_activated' => false] + $this->resolveProductFields($license)];
     }
 
     public function validate(array $body): array
@@ -73,7 +73,25 @@ class LicenseController
         return ['status' => 200, 'body' => [
             'ok' => true,
             'expiry_date' => $license['expiry_date'],
-        ]];
+        ] + $this->resolveProductFields($license)];
+    }
+
+    /**
+     * encryption_key/product_folder for a license row already joined to its
+     * product (see findLicense()). No product assigned (product_id NULL,
+     * i.e. every license issued before products existed) falls back to
+     * DEFAULT_ENCRYPTION_KEY and no folder restriction -- same behavior as
+     * before products existed at all.
+     */
+    private function resolveProductFields(array $license): array
+    {
+        $key = $license['product_encryption_key']
+            ?? (getenv('DEFAULT_ENCRYPTION_KEY') ?: (defined('DEFAULT_ENCRYPTION_KEY') ? DEFAULT_ENCRYPTION_KEY : ''));
+
+        return [
+            'encryption_key' => $key,
+            'product_folder' => $license['product_folder'] ?? '',
+        ];
     }
 
     private function readKeyAndFingerprint(array $body): array
@@ -94,7 +112,12 @@ class LicenseController
 
     private function findLicense(PDO $db, string $key)
     {
-        $stmt = $db->prepare('SELECT * FROM licenses WHERE license_key = ?');
+        $stmt = $db->prepare('
+            SELECT l.*, p.folder_path AS product_folder, p.encryption_key AS product_encryption_key
+            FROM licenses l
+            LEFT JOIN products p ON p.id = l.product_id
+            WHERE l.license_key = ?
+        ');
         $stmt->execute([$key]);
         return $stmt->fetch();
     }

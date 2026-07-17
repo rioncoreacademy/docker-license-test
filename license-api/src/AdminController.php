@@ -15,6 +15,7 @@ class AdminController
         // fake when someone's really just trying to re-issue themselves a
         // fresh key past a previous key's expiry.
         $fingerprint = trim((string) ($body['fingerprint'] ?? ''));
+        $productId = ($body['product_id'] ?? '') !== '' ? (int) $body['product_id'] : null;
 
         if ($email === '' || $expires === '') {
             return ['status' => 400, 'body' => ['ok' => false, 'error' => 'missing_email_or_expires']];
@@ -33,6 +34,16 @@ class AdminController
         }
 
         $db = Database::get();
+
+        $product = null;
+        if ($productId !== null) {
+            $stmt = $db->prepare('SELECT id, slug, name, folder_path FROM products WHERE id = ?');
+            $stmt->execute([$productId]);
+            $product = $stmt->fetch();
+            if ($product === false) {
+                return ['status' => 400, 'body' => ['ok' => false, 'error' => 'product_not_found']];
+            }
+        }
 
         // Surface any existing non-revoked license(s) for this email OR this
         // fingerprint so the caller can offer "extend instead" -- doesn't
@@ -72,11 +83,15 @@ class AdminController
             return ['status' => 500, 'body' => ['ok' => false, 'error' => 'key_generation_failed']];
         }
 
-        $db->prepare('INSERT INTO licenses (license_key, customer_email, max_activations, expiry_date, status) VALUES (?, ?, ?, ?, ?)')
-            ->execute([$key, $email, $seats, $expires, 'active']);
+        $db->prepare('INSERT INTO licenses (license_key, customer_email, max_activations, product_id, expiry_date, status) VALUES (?, ?, ?, ?, ?, ?)')
+            ->execute([$key, $email, $seats, $productId, $expires, 'active']);
         $licenseId = (int) $db->lastInsertId();
 
-        $this->logEvent($db, $licenseId, 'created', "seats={$seats}, expires={$expires}");
+        $eventDetail = "seats={$seats}, expires={$expires}";
+        if ($product !== null) {
+            $eventDetail .= ", product={$product['slug']}";
+        }
+        $this->logEvent($db, $licenseId, 'created', $eventDetail);
 
         return ['status' => 200, 'body' => [
             'ok' => true,
@@ -84,6 +99,12 @@ class AdminController
             'customer_email' => $email,
             'seats' => $seats,
             'expiry_date' => $expires,
+            'product' => $product !== null ? [
+                'id'          => (int) $product['id'],
+                'slug'        => $product['slug'],
+                'name'        => $product['name'],
+                'folder_path' => $product['folder_path'],
+            ] : null,
             'existing_licenses' => array_map(static fn($l) => [
                 'license_key' => $l['license_key'],
                 'expiry_date' => $l['expiry_date'],
@@ -213,6 +234,12 @@ class AdminController
                 'detail'     => $e['detail'],
                 'created_at' => $e['created_at'],
             ], $events),
+            'product' => $license['product_id'] !== null ? [
+                'id'          => (int) $license['product_id'],
+                'slug'        => $license['product_slug'],
+                'name'        => $license['product_name'],
+                'folder_path' => $license['product_folder_path'],
+            ] : null,
             'related_by_fingerprint' => array_map(static fn($l) => [
                 'license_key'    => $l['license_key'],
                 'customer_email' => $l['customer_email'],
@@ -224,9 +251,61 @@ class AdminController
 
     private function findByKey(PDO $db, string $key)
     {
-        $stmt = $db->prepare('SELECT * FROM licenses WHERE license_key = ?');
+        $stmt = $db->prepare('
+            SELECT l.*, p.slug AS product_slug, p.name AS product_name, p.folder_path AS product_folder_path
+            FROM licenses l
+            LEFT JOIN products p ON p.id = l.product_id
+            WHERE l.license_key = ?
+        ');
         $stmt->execute([$key]);
         return $stmt->fetch();
+    }
+
+    /** GET /admin/products -- for populating the Generate form's product dropdown. */
+    public function listProducts(): array
+    {
+        $stmt = Database::get()->query('SELECT id, slug, name, folder_path FROM products ORDER BY name, slug');
+        // Deliberately not selecting encryption_key here -- shown once, at
+        // creation, same as license_key itself.
+        return ['status' => 200, 'body' => ['ok' => true, 'products' => $stmt->fetchAll()]];
+    }
+
+    /** POST /admin/products -- create a new product (folder + its decryption key). */
+    public function createProduct(array $body): array
+    {
+        $slug = trim((string) ($body['slug'] ?? ''));
+        $name = trim((string) ($body['name'] ?? ''));
+        $folderPath = trim((string) ($body['folder_path'] ?? ''));
+        $encryptionKey = trim((string) ($body['encryption_key'] ?? ''));
+
+        if (!preg_match('/^[a-z0-9_-]+$/', $slug)) {
+            return ['status' => 400, 'body' => ['ok' => false, 'error' => 'invalid_slug']];
+        }
+        if ($folderPath === '' || $encryptionKey === '') {
+            return ['status' => 400, 'body' => ['ok' => false, 'error' => 'missing_folder_path_or_encryption_key']];
+        }
+
+        $db = Database::get();
+        try {
+            $db->prepare('INSERT INTO products (slug, name, folder_path, encryption_key) VALUES (?, ?, ?, ?)')
+                ->execute([$slug, $name, $folderPath, $encryptionKey]);
+        } catch (PDOException $e) {
+            // Unique constraint on slug or folder_path (see db/init.sql) --
+            // most likely someone re-creating an existing product by mistake.
+            if ((int) $e->getCode() === 23000) {
+                return ['status' => 400, 'body' => ['ok' => false, 'error' => 'slug_or_folder_already_exists']];
+            }
+            throw $e;
+        }
+
+        return ['status' => 200, 'body' => [
+            'ok' => true,
+            'id' => (int) $db->lastInsertId(),
+            'slug' => $slug,
+            'name' => $name,
+            'folder_path' => $folderPath,
+            'encryption_key' => $encryptionKey,
+        ]];
     }
 
     /** Every license (any status) that has an activation with this exact fingerprint. */

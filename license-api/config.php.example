@@ -9,3 +9,8 @@ define('DB_PASS', 'change-me');
 
 // Protects /admin/generate and /admin/lookup (public/admin.html).
 define('ADMIN_TOKEN', 'change-me-to-something-random');
+
+// Fallback key returned by /activate and /validate for licenses with no
+// product assigned (product_id IS NULL) -- see the "Products" section in
+// README.md. Folder-scoped licenses use their product's own key instead.
+define('DEFAULT_ENCRYPTION_KEY', 'change-me-to-a-real-encryption-key');

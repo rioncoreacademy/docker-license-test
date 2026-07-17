@@ -15,11 +15,19 @@ docker compose up --build
 
 API is now at `http://localhost:8080`. MySQL is exposed on `localhost:3307`
 (user `license_app`, db `licensing`) if you want to inspect it with a GUI
-client. `db/init.sql` creates three tables — `licenses`, `activations`
-(which machine holds which license), and `license_events` (an audit trail
-of created/extended/revoked/reactivated) — and seeds two test licenses:
+client. `db/init.sql` creates four tables — `products` (a folder inside
+`tarang2p1-files` plus the one key that decrypts it, see "Products" below),
+`licenses`, `activations` (which machine holds which license), and
+`license_events` (an audit trail of created/extended/revoked/reactivated) —
+and seeds two test licenses, neither assigned to a product (full-repo
+access):
 - `TEST-1234-5678-9ABC` — active, 2 activation seats, expires 2027-12-31
 - `TEST-EXPIRED-0001` — active status but expiry_date in the past (tests the expiry-rejection path)
+
+Set `DEFAULT_ENCRYPTION_KEY` in `.env` before real use — it's the decryption
+key handed back by `/activate`/`/validate` for any license with no product
+assigned (like the two test licenses above). Leaving it blank means every
+unscoped license gets an empty key.
 
 ## How a real customer actually uses this
 
@@ -30,6 +38,12 @@ them to run), starts the container, and the container calls `/activate`
 then `/validate` against whatever `-licenseapi` URL you gave them before
 it unlocks the lab content. See `tarang2p1-go`'s `fingerprint.go` /
 `NVR/entrypoint.sh`'s license-gate block for exactly how that's wired.
+
+`/activate`/`/validate` also hand back `encryption_key` and `product_folder`
+in the same response — this is how the container gets the key to decrypt
+the Verilog files and, if the license is scoped to a product, which folder
+to clone instead of the whole repo. No separate call, no Cloudflare Worker,
+no shared class token involved on this path — see "Products" below.
 
 ## Manual testing (without Tarang2p1.exe)
 
@@ -58,13 +72,15 @@ you exceed `max_activations`, and `TEST-EXPIRED-0001` to see
 
 | Endpoint             | Method | Body/Query                              | Notes                                   |
 |-----------------------|--------|------------------------------------------|------------------------------------------|
-| `/activate`           | POST   | `{license_key, fingerprint}`             | Idempotent — re-activating the same machine returns `already_activated: true` |
-| `/validate`           | POST   | `{license_key, fingerprint}`             | Called on every app startup |
-| `/admin/generate`     | POST   | `{email, expires, seats?, fingerprint?}` | Requires `X-Admin-Token` — see below |
+| `/activate`           | POST   | `{license_key, fingerprint}`             | Idempotent — re-activating the same machine returns `already_activated: true`. Response includes `encryption_key`/`product_folder` |
+| `/validate`           | POST   | `{license_key, fingerprint}`             | Called on every app startup. Response includes `encryption_key`/`product_folder` |
+| `/admin/generate`     | POST   | `{email, expires, seats?, fingerprint?, product_id?}` | Requires `X-Admin-Token` — see below |
 | `/admin/lookup`       | GET    | `?key=...`                               | Requires `X-Admin-Token` |
 | `/admin/extend`       | POST   | `{license_key, expires, seats?}`         | Requires `X-Admin-Token` — updates the *same* license, doesn't create a new one |
 | `/admin/revoke`       | POST   | `{license_key}`                          | Requires `X-Admin-Token` |
 | `/admin/reactivate`   | POST   | `{license_key}`                          | Requires `X-Admin-Token` |
+| `/admin/products`     | GET    | —                                         | Requires `X-Admin-Token` — lists products (no `encryption_key` in the list, shown once at creation) |
+| `/admin/products`     | POST   | `{slug, name?, folder_path, encryption_key}` | Requires `X-Admin-Token` — creates a product |
 
 ## Generate, extend, revoke a license key
 
@@ -113,6 +129,33 @@ travels as a plain `X-Admin-Token` header, so this only actually protects
 anything once the API is served over HTTPS (see MIGRATION.md) — don't rely
 on it over plain HTTP beyond local testing.
 
+## Products (folder-scoped licenses)
+
+A product is a folder inside `tarang2p1-files` plus the one encryption key
+that decrypts it. Assign one to a license (via the Generate form's dropdown,
+or `product_id` on `/admin/generate`) to scope that license to only that
+folder — `NVR/entrypoint.sh` sparse-checkouts just that subtree instead of
+cloning the whole repo, and writes the product's key instead of
+`DEFAULT_ENCRYPTION_KEY`.
+
+**The key lives on the product, not the license.** `encrypt_lab.sh` encrypts
+a folder's `.v.enc` files once with one key — every license unlocking that
+same content must resolve to the same key, so it's stored once per product
+and every license pointing at that product shares it. Creating a product
+(Generate form → "+ Add new product", or `POST /admin/products`) takes:
+
+- `slug` — short identifier (`verilog101`), lowercase letters/numbers/`-`/`_`
+- `name` — optional display name
+- `folder_path` — the relative path inside `tarang2p1-files` this product
+  unlocks (must already exist in that repo)
+- `encryption_key` — the same key you passed to `encrypt_lab.sh` for that
+  folder — shown once, at creation, same as `license_key` itself
+
+A license with no product assigned (`product_id` left blank at generate
+time) is a legacy/full-access license: `/activate`/`/validate` fall back to
+`DEFAULT_ENCRYPTION_KEY` and no folder restriction — the same behavior every
+license had before products existed.
+
 ## How the pieces fit together
 
 - **`license_key`** — random, generated server-side (`AdminController`),
@@ -128,6 +171,9 @@ on it over plain HTTP beyond local testing.
   actively checking in.
 - **`license_events` table** — a log of what happened to a license and
   when (created/extended/revoked/reactivated), shown on the lookup page.
+- **`products` table** — a folder + the one key that decrypts it (see
+  "Products" above). `licenses.product_id` points at one, or stays `NULL`
+  for a legacy/full-access license.
 
 ## Moving to Hostinger later
 

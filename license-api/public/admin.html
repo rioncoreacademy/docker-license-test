@@ -120,6 +120,25 @@
     <label for="genFingerprint">Customer's machine fingerprint (optional)</label>
     <input id="genFingerprint" type="text" placeholder="64-character hash from Get-Fingerprint.ps1 -- checks for a repeat customer even under a new email">
 
+    <label for="genProduct">Product (which folder this license unlocks)</label>
+    <select id="genProduct">
+      <option value="">Full access (legacy -- whole repo)</option>
+    </select>
+    <div class="note"><a href="#" id="toggleAddProduct">+ Add new product</a></div>
+
+    <div id="addProductForm" class="inline-form">
+      <label for="prodSlug">Slug (letters/numbers/-/_ only)</label>
+      <input id="prodSlug" type="text" placeholder="verilog101">
+      <label for="prodName">Name (optional)</label>
+      <input id="prodName" type="text" placeholder="Verilog 101">
+      <label for="prodFolder">Folder path (relative, inside tarang2p1-files)</label>
+      <input id="prodFolder" type="text" placeholder="tarang2_dp1/uart">
+      <label for="prodKey">Encryption key (the same one passed to encrypt_lab.sh for this folder)</label>
+      <input id="prodKey" type="text" placeholder="AES passphrase for this folder's .v.enc files">
+      <button type="button" class="small" id="prodSubmit">Create product</button>
+      <div id="prodResult" class="result"></div>
+    </div>
+
     <button id="genSubmit">Generate license</button>
     <div id="genResult" class="result"></div>
   </div>
@@ -159,7 +178,57 @@ function showGate() {
 function showApp() {
   document.getElementById('tokenGate').style.display = 'none';
   document.getElementById('app').style.display = 'block';
+  loadProducts();
 }
+
+async function loadProducts(selectId) {
+  const sel = document.getElementById('genProduct');
+  const r = await api('/admin/products');
+  if (!r.ok) return;
+  sel.innerHTML = '<option value="">Full access (legacy -- whole repo)</option>'
+    + r.products.map(p => `<option value="${p.id}">${esc(p.name || p.slug)} (${esc(p.folder_path)})</option>`).join('');
+  if (selectId) sel.value = String(selectId);
+}
+
+document.getElementById('toggleAddProduct').addEventListener('click', (e) => {
+  e.preventDefault();
+  document.getElementById('addProductForm').classList.toggle('show');
+});
+
+document.getElementById('prodSubmit').addEventListener('click', async () => {
+  const slug = document.getElementById('prodSlug').value.trim();
+  const name = document.getElementById('prodName').value.trim();
+  const folder_path = document.getElementById('prodFolder').value.trim();
+  const encryption_key = document.getElementById('prodKey').value.trim();
+  const out = document.getElementById('prodResult');
+
+  if (!slug || !folder_path || !encryption_key) {
+    out.className = 'result err show';
+    out.textContent = 'Slug, folder path, and encryption key are all required.';
+    return;
+  }
+
+  const r = await api('/admin/products', { method: 'POST', body: { slug, name, folder_path, encryption_key } });
+  if (r.httpStatus === 401) { clearToken(); showGate(); return; }
+
+  if (!r.ok) {
+    out.className = 'result err show';
+    out.textContent = r.error === 'slug_or_folder_already_exists'
+      ? 'A product with that slug or folder path already exists.'
+      : r.error === 'invalid_slug'
+      ? 'Slug must be lowercase letters, numbers, - or _ only.'
+      : 'Could not create product: ' + (r.error || 'unknown error');
+    return;
+  }
+
+  out.className = 'result ok show';
+  out.textContent = `Product "${r.name || r.slug}" created and selected below.`;
+  document.getElementById('prodSlug').value = '';
+  document.getElementById('prodName').value = '';
+  document.getElementById('prodFolder').value = '';
+  document.getElementById('prodKey').value = '';
+  await loadProducts(r.id);
+});
 
 async function verifyTokenAndEnter(token) {
   setToken(token);
@@ -194,6 +263,7 @@ document.getElementById('genSubmit').addEventListener('click', async () => {
   const expires = document.getElementById('genExpires').value;
   const seats = document.getElementById('genSeats').value || '1';
   const fingerprint = document.getElementById('genFingerprint').value.trim();
+  const productId = document.getElementById('genProduct').value;
   const btn = document.getElementById('genSubmit');
   const out = document.getElementById('genResult');
 
@@ -206,6 +276,7 @@ document.getElementById('genSubmit').addEventListener('click', async () => {
   btn.disabled = true;
   const body = { email, expires, seats };
   if (fingerprint) body.fingerprint = fingerprint;
+  if (productId) body.product_id = productId;
   const r = await api('/admin/generate', { method: 'POST', body });
   btn.disabled = false;
 
@@ -233,10 +304,14 @@ document.getElementById('genSubmit').addEventListener('click', async () => {
   }
 
   const runCmd = `Tarang2p1.exe start -licensekey ${r.license_key} -licenseapi ${apiOrigin()}`;
+  const productLine = r.product
+    ? `<div>Scoped to product <strong>${esc(r.product.name || r.product.slug)}</strong> (folder <code>${esc(r.product.folder_path)}</code>).</div>`
+    : `<div>Full access (no product assigned — legacy/whole-repo license).</div>`;
   out.className = 'result ok show';
   out.innerHTML = `
     ${warn}
     <div>License created for <strong>${esc(r.customer_email)}</strong> — ${r.seats} seat(s), expires ${r.expiry_date}.</div>
+    ${productLine}
     <div class="key-line"><span>${r.license_key}</span>
       <button type="button" class="small" onclick="navigator.clipboard.writeText('${r.license_key}')">Copy key</button>
     </div>
@@ -283,11 +358,16 @@ async function runLookup(key) {
     ? `<button type="button" class="small secondary" data-action="reactivate">Reactivate</button>`
     : `<button type="button" class="small danger" data-action="revoke">Revoke</button>`;
 
+  const productHtml = r.product
+    ? `<div class="note">Product: <strong>${esc(r.product.name || r.product.slug)}</strong> (folder <code>${esc(r.product.folder_path)}</code>)</div>`
+    : `<div class="note">Product: full access (legacy/whole-repo license)</div>`;
+
   out.className = 'result ok show';
   out.innerHTML = `
     ${relatedHtml}
     <div><span class="pill ${state}">${label}</span> &nbsp; <strong>${esc(r.customer_email)}</strong></div>
     <div class="note">Expires ${r.expiry_date} &middot; ${r.activations_used} / ${r.max_activations} seat(s) used &middot; created ${r.created_at}</div>
+    ${productHtml}
 
     <h3 class="sec">Activations</h3>
     <table><thead><tr><th>Fingerprint</th><th>Activated</th><th>Last seen</th></tr></thead><tbody>${actRows}</tbody></table>

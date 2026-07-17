@@ -14,7 +14,11 @@ unaffected; only the URL they call changes.
    user (Hostinger prefixes both with your account ID, e.g.
    `u123456789_licensing` / `u123456789_license_app`). Note the password.
 2. Open **phpMyAdmin** for that database and run [db/init.sql](db/init.sql)
-   under **Import** (or paste it into the SQL tab).
+   under **Import** (or paste it into the SQL tab). If this database already
+   existed before the `products` table was added, run
+   [db/migrations/0002_add_products.sql](db/migrations/0002_add_products.sql)
+   instead — it's the same schema addition as an `ALTER`/`CREATE TABLE IF
+   NOT EXISTS`, safe to run once against a live database.
 3. Delete the two `TEST-*` seed rows from `licenses` afterward — they're
    for local testing only:
    ```sql
