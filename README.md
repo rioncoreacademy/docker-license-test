@@ -72,15 +72,16 @@ you exceed `max_activations`, and `TEST-EXPIRED-0001` to see
 
 | Endpoint             | Method | Body/Query                              | Notes                                   |
 |-----------------------|--------|------------------------------------------|------------------------------------------|
-| `/activate`           | POST   | `{license_key, fingerprint}`             | Idempotent — re-activating the same machine returns `already_activated: true`. Response includes `encryption_key`/`product_folder` |
-| `/validate`           | POST   | `{license_key, fingerprint}`             | Called on every app startup. Response includes `encryption_key`/`product_folder` |
+| `/activate`           | POST   | `{license_key, fingerprint}`             | Idempotent — re-activating the same machine returns `already_activated: true`. Response includes `encryption_key`/`product_folders` |
+| `/validate`           | POST   | `{license_key, fingerprint}`             | Called on every app startup. Response includes `encryption_key`/`product_folders` |
 | `/admin/generate`     | POST   | `{email, expires, seats?, fingerprint?, product_id?}` | Requires `X-Admin-Token` — see below |
 | `/admin/lookup`       | GET    | `?key=...`                               | Requires `X-Admin-Token` |
 | `/admin/extend`       | POST   | `{license_key, expires, seats?}`         | Requires `X-Admin-Token` — updates the *same* license, doesn't create a new one |
 | `/admin/revoke`       | POST   | `{license_key}`                          | Requires `X-Admin-Token` |
 | `/admin/reactivate`   | POST   | `{license_key}`                          | Requires `X-Admin-Token` |
-| `/admin/products`     | GET    | —                                         | Requires `X-Admin-Token` — lists products (no `encryption_key` in the list, shown once at creation) |
-| `/admin/products`     | POST   | `{slug, name?, folder_path, encryption_key}` | Requires `X-Admin-Token` — creates a product |
+| `/admin/products`     | GET    | —                                         | Requires `X-Admin-Token` — lists products with their `folders` array (no `encryption_key` in the list, shown once at creation) |
+| `/admin/products`     | POST   | `{slug, name?, folder_paths, encryption_key}` | Requires `X-Admin-Token` — creates a product, `folder_paths` is an array (one or more) |
+| `/admin/repo-folders` | GET    | —                                         | Requires `X-Admin-Token` — lists `tarang2p1-files`' real top-level folders live from the GitHub API, for the product picker |
 
 ## Generate, extend, revoke a license key
 
@@ -131,25 +132,32 @@ on it over plain HTTP beyond local testing.
 
 ## Products (folder-scoped licenses)
 
-A product is a folder inside `tarang2p1-files` plus the one encryption key
-that decrypts it. Assign one to a license (via the Generate form's dropdown,
-or `product_id` on `/admin/generate`) to scope that license to only that
-folder — `NVR/entrypoint.sh` sparse-checkouts just that subtree instead of
-cloning the whole repo, and writes the product's key instead of
-`DEFAULT_ENCRYPTION_KEY`.
+A product is one or more folders inside `tarang2p1-files` plus the one
+encryption key that decrypts all of them. Assign one to a license (via the
+Generate form's dropdown, or `product_id` on `/admin/generate`) to scope
+that license to only those folders — `NVR/entrypoint.sh` sparse-checkouts
+just that subtree(s) instead of cloning the whole repo, and writes the
+product's key instead of `DEFAULT_ENCRYPTION_KEY`.
 
 **The key lives on the product, not the license.** `encrypt_lab.sh` encrypts
-a folder's `.v.enc` files once with one key — every license unlocking that
+a folder's `.v.enc` files with a specific key — every license unlocking that
 same content must resolve to the same key, so it's stored once per product
-and every license pointing at that product shares it. Creating a product
-(Generate form → "+ Add new product", or `POST /admin/products`) takes:
+and every license pointing at that product shares it. A product can bundle
+multiple folders together (e.g. a "tarang2p2 + tarang2p3" combo product) as
+long as all of them were encrypted with that same key — don't bundle
+folders that were encrypted separately with different keys.
+
+Creating a product (Generate form → "+ Add new product", or
+`POST /admin/products`) takes:
 
 - `slug` — short identifier (`verilog101`), lowercase letters/numbers/`-`/`_`
 - `name` — optional display name
-- `folder_path` — the relative path inside `tarang2p1-files` this product
-  unlocks (must already exist in that repo)
+- `folder_paths` — one or more relative paths inside `tarang2p1-files` this
+  product unlocks (must already exist in that repo) — the admin UI shows
+  these as a checkbox list fetched live from the repo (`GET
+  /admin/repo-folders`), so you're picking real folders, not typing paths
 - `encryption_key` — the same key you passed to `encrypt_lab.sh` for that
-  folder — shown once, at creation, same as `license_key` itself
+  content — shown once, at creation, same as `license_key` itself
 
 A license with no product assigned (`product_id` left blank at generate
 time) is a legacy/full-access license: `/activate`/`/validate` fall back to
@@ -171,9 +179,12 @@ license had before products existed.
   actively checking in.
 - **`license_events` table** — a log of what happened to a license and
   when (created/extended/revoked/reactivated), shown on the lookup page.
-- **`products` table** — a folder + the one key that decrypts it (see
+- **`products` table** — the one key that decrypts its content (see
   "Products" above). `licenses.product_id` points at one, or stays `NULL`
   for a legacy/full-access license.
+- **`product_folders` table** — one or more folders bundled into a product;
+  `folder_path` is globally unique across every product, so a folder can
+  only ever belong to one product (and therefore one key).
 
 ## Moving to Hostinger later
 

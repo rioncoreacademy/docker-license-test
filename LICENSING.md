@@ -44,7 +44,7 @@ hash with no entitlement attached to it. The API requires both.
      still active/not expired/not revoked, and that this fingerprint has a
      matching activation row.
 
-   Both calls' responses also carry `encryption_key` and `product_folder` —
+   Both calls' responses also carry `encryption_key` and `product_folders` —
    this is the actual decryption key delivery, straight into
    `NVR/entrypoint.sh`, no separate call and no CLASS_TOKEN/Cloudflare Worker
    involved on this path. See "Products" below.
@@ -68,20 +68,23 @@ a new email address. The lookup page does the same cross-check
 retroactively for any key that's already been activated
 (`related_by_fingerprint`), no fingerprint prompt needed at generate time.
 
-## Products — scoping a license to a folder
+## Products — scoping a license to one or more folders
 
 `license_key` and `fingerprint` answer "is this a valid seat on this
 machine" — they say nothing about *which* content that seat should see. A
 third concept, `product_id` on the license row, answers that: it points at
-a `products` table row (`folder_path` + `encryption_key`), and
-`/activate`/`/validate` resolve it into the `encryption_key`/`product_folder`
-fields covered above.
+a `products` row (`encryption_key` + one or more rows in `product_folders`),
+and `/activate`/`/validate` resolve it into the `encryption_key`/
+`product_folders` fields covered above.
 
 The key lives on the **product**, not the license, because `encrypt_lab.sh`
-encrypts a folder's `.v.enc` files once with one key — every license
+encrypts a folder's `.v.enc` files with a specific key — every license
 unlocking that same content must resolve to the same key. Two licenses for
 the same folder with two different keys would mean one of them simply
-can't decrypt anything.
+can't decrypt anything. A product can bundle several folders together (all
+sharing that one key) — `product_folders.folder_path` is globally unique
+across every product, so a given folder can still only ever belong to one
+product, whether that product covers one folder or several.
 
 `product_id IS NULL` (the default — both seed `TEST-*` licenses are this) is
 a legacy/full-access license: `/activate`/`/validate` fall back to a global
@@ -120,13 +123,13 @@ start it without both, so every real customer launch is gated by design,
 even though the underlying container mechanism remains conditional for
 other deployment paths.
 
-If a scoped license passes the gate but its `product_folder` doesn't
+If a scoped license passes the gate but one of its `product_folders` doesn't
 actually exist in `tarang2p1-files` (a content configuration mistake, not a
 licensing problem), `entrypoint.sh` locks `$WORK` the same way an invalid
-license does, with a message that says so rather than crashing. Likewise, a
-"valid" license whose product/`DEFAULT_ENCRYPTION_KEY` resolves to an empty
-key is treated as **invalid** — fails closed rather than proceeding with no
-decryption key at all.
+license does, naming whichever folder(s) are missing rather than crashing.
+Likewise, a "valid" license whose product/`DEFAULT_ENCRYPTION_KEY` resolves
+to an empty key is treated as **invalid** — fails closed rather than
+proceeding with no decryption key at all.
 
 **HTTPS is required in production** for the same reason `ADMIN_TOKEN` already
 is (see README.md): `/activate`/`/validate` now hand back a real decryption
@@ -138,14 +141,15 @@ of it.
 
 | Endpoint | Method | Body/Query | Notes |
 |---|---|---|---|
-| `/activate` | POST | `{license_key, fingerprint}` | Idempotent — re-activating the same machine returns `already_activated: true`. Also returns `encryption_key`/`product_folder` |
-| `/validate` | POST | `{license_key, fingerprint}` | Called on every app startup. Also returns `encryption_key`/`product_folder` |
+| `/activate` | POST | `{license_key, fingerprint}` | Idempotent — re-activating the same machine returns `already_activated: true`. Also returns `encryption_key`/`product_folders` |
+| `/validate` | POST | `{license_key, fingerprint}` | Called on every app startup. Also returns `encryption_key`/`product_folders` |
 | `/admin/generate` | POST | `{email, expires, seats?, fingerprint?, product_id?}` | Requires `X-Admin-Token` |
 | `/admin/lookup` | GET | `?key=...` | Requires `X-Admin-Token` |
 | `/admin/extend` | POST | `{license_key, expires, seats?}` | Requires `X-Admin-Token` — updates the *same* license, doesn't create a new one |
 | `/admin/revoke` | POST | `{license_key}` | Requires `X-Admin-Token` |
 | `/admin/reactivate` | POST | `{license_key}` | Requires `X-Admin-Token` |
-| `/admin/products` | GET / POST | `{slug, name?, folder_path, encryption_key}` (POST) | Requires `X-Admin-Token` — list/create products |
+| `/admin/products` | GET / POST | `{slug, name?, folder_paths, encryption_key}` (POST) | Requires `X-Admin-Token` — list/create products; `folder_paths` is an array |
+| `/admin/repo-folders` | GET | — | Requires `X-Admin-Token` — real folders in `tarang2p1-files`, live from GitHub |
 
 See [README.md](README.md) for setup/running instructions and
 [MIGRATION.md](MIGRATION.md) for moving this to Hostinger production.
