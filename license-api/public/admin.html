@@ -87,6 +87,15 @@
   .pill.matched { background: var(--warn-bg); color: var(--warn); font-size: 10.5px; margin-left: 6px; }
   .inline-form { display: none; margin-top: 12px; padding-top: 12px; border-top: 1px dashed var(--border); }
   .inline-form.show { display: block; }
+  .folder-picker {
+    max-height: 160px; overflow-y: auto; border: 1px solid var(--border);
+    border-radius: 6px; padding: 8px 10px; background: #fff; font-size: 13px;
+  }
+  .folder-picker label {
+    display: flex; align-items: center; gap: 6px; margin: 4px 0;
+    font-size: 13px; color: var(--ink); font-weight: normal; cursor: pointer;
+  }
+  .folder-picker input[type="checkbox"] { width: auto; }
   #tokenGate { max-width: 360px; margin: 80px auto; text-align: center; }
   #tokenGate input { text-align: center; }
 </style>
@@ -136,8 +145,8 @@
       <input id="prodSlug" type="text" placeholder="verilog101">
       <label for="prodName">Name (optional)</label>
       <input id="prodName" type="text" placeholder="Verilog 101">
-      <label for="prodFolder">Folder path (relative, inside tarang2p1-files)</label>
-      <input id="prodFolder" type="text" placeholder="tarang2_dp1/uart">
+      <label>Folders (select one or more -- pulled live from tarang2p1-files)</label>
+      <div id="prodFolders" class="folder-picker">Loading folders…</div>
       <label for="prodKey">Encryption key (the same one passed to encrypt_lab.sh for this folder)</label>
       <input id="prodKey" type="text" placeholder="AES passphrase for this folder's .v.enc files">
       <button type="button" class="small" id="prodSubmit">Create product</button>
@@ -191,35 +200,56 @@ async function loadProducts(selectId) {
   const r = await api('/admin/products');
   if (!r.ok) return;
   sel.innerHTML = '<option value="">Full access (legacy -- whole repo)</option>'
-    + r.products.map(p => `<option value="${p.id}">${esc(p.name || p.slug)} (${esc(p.folder_path)})</option>`).join('');
+    + r.products.map(p => `<option value="${p.id}">${esc(p.name || p.slug)} (${esc(p.folders.join(', '))})</option>`).join('');
   if (selectId) sel.value = String(selectId);
+}
+
+let repoFoldersLoaded = false;
+async function loadRepoFolders() {
+  const box = document.getElementById('prodFolders');
+  const r = await api('/admin/repo-folders');
+  if (!r.ok) {
+    box.textContent = r.error === 'github_unreachable'
+      ? 'Could not reach GitHub to list folders -- check your connection and try again.'
+      : 'Could not load folders: ' + (r.error || 'unknown error');
+    return;
+  }
+  if (r.folders.length === 0) {
+    box.textContent = 'No folders found in tarang2p1-files.';
+    return;
+  }
+  box.innerHTML = r.folders.map(f =>
+    `<label><input type="checkbox" value="${esc(f)}"> ${esc(f)}</label>`
+  ).join('');
+  repoFoldersLoaded = true;
 }
 
 document.getElementById('toggleAddProduct').addEventListener('click', (e) => {
   e.preventDefault();
   document.getElementById('addProductForm').classList.toggle('show');
+  if (!repoFoldersLoaded) loadRepoFolders();
 });
 
 document.getElementById('prodSubmit').addEventListener('click', async () => {
   const slug = document.getElementById('prodSlug').value.trim();
   const name = document.getElementById('prodName').value.trim();
-  const folder_path = document.getElementById('prodFolder').value.trim();
+  const folder_paths = Array.from(document.querySelectorAll('#prodFolders input[type="checkbox"]:checked')).map(cb => cb.value);
   const encryption_key = document.getElementById('prodKey').value.trim();
   const out = document.getElementById('prodResult');
 
-  if (!slug || !folder_path || !encryption_key) {
+  if (!slug || folder_paths.length === 0 || !encryption_key) {
     out.className = 'result err show';
-    out.textContent = 'Slug, folder path, and encryption key are all required.';
+    out.textContent = 'Slug, at least one folder, and an encryption key are all required.';
     return;
   }
 
-  const r = await api('/admin/products', { method: 'POST', body: { slug, name, folder_path, encryption_key } });
+  const r = await api('/admin/products', { method: 'POST', body: { slug, name, folder_paths, encryption_key } });
   if (r.httpStatus === 401) { clearToken(); showGate(); return; }
 
   if (!r.ok) {
     out.className = 'result err show';
     out.textContent = r.error === 'slug_or_folder_already_exists'
-      ? 'A product with that slug or folder path already exists.'
+      ? 'A product with that slug already exists, or one of these folders already belongs to another product.'
       : r.error === 'invalid_slug'
       ? 'Slug must be lowercase letters, numbers, - or _ only.'
       : 'Could not create product: ' + (r.error || 'unknown error');
@@ -227,10 +257,10 @@ document.getElementById('prodSubmit').addEventListener('click', async () => {
   }
 
   out.className = 'result ok show';
-  out.textContent = `Product "${r.name || r.slug}" created and selected below.`;
+  out.textContent = `Product "${r.name || r.slug}" created (${r.folders.join(', ')}) and selected below.`;
   document.getElementById('prodSlug').value = '';
   document.getElementById('prodName').value = '';
-  document.getElementById('prodFolder').value = '';
+  document.querySelectorAll('#prodFolders input[type="checkbox"]:checked').forEach(cb => cb.checked = false);
   document.getElementById('prodKey').value = '';
   await loadProducts(r.id);
 });
@@ -310,7 +340,10 @@ document.getElementById('genSubmit').addEventListener('click', async () => {
 
   const runCmd = `Tarang2p1.exe start -licensekey ${r.license_key} -licenseapi ${apiOrigin()}`;
   const productLine = r.product
-    ? `<div>Scoped to product <strong>${esc(r.product.name || r.product.slug)}</strong> (folder <code>${esc(r.product.folder_path)}</code>).</div>`
+    ? `<div>
+        Scoped to product <strong>${esc(r.product.name || r.product.slug)}</strong>
+        (folders: ${r.product.folders.map(f => `<code>${esc(f)}</code>`).join(', ')}).
+      </div>`
     : `<div>Full access (no product assigned — legacy/whole-repo license).</div>`;
   out.className = 'result ok show';
   out.innerHTML = `
@@ -371,7 +404,10 @@ async function runLookup(key) {
     : `<button type="button" class="small danger" data-action="revoke">Revoke</button>`;
 
   const productHtml = r.product
-    ? `<div class="note">Product: <strong>${esc(r.product.name || r.product.slug)}</strong> (folder <code>${esc(r.product.folder_path)}</code>)</div>`
+    ? `<div class="note">
+        Product: <strong>${esc(r.product.name || r.product.slug)}</strong>
+        (folders: ${r.product.folders.map(f => `<code>${esc(f)}</code>`).join(', ')})
+      </div>`
     : `<div class="note">Product: full access (legacy/whole-repo license)</div>`;
 
   out.className = 'result ok show';

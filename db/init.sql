@@ -1,17 +1,31 @@
--- A product is a folder inside tarang2p1-files plus the one encryption key
--- that unlocks it. Folder-scoped licenses point at a product; the key lives
--- here (not on the license row) because encrypt_lab.sh encrypts a folder's
--- .v.enc files ONCE with ONE key -- every license unlocking that same
--- content must resolve to the same key. folder_path '' means "whole repo"
--- (not actually used by any product row today -- that's what a NULL
--- licenses.product_id already means, see below).
+-- A product is one or more folders inside tarang2p1-files plus the one
+-- encryption key that unlocks all of them. Folder-scoped licenses point at
+-- a product; the key lives here (not on the license row) because
+-- encrypt_lab.sh encrypts a folder's .v.enc files with a specific key --
+-- every license unlocking that same content must resolve to the same key.
+-- A product can bundle multiple folders (e.g. tarang2p2 + tarang2p3
+-- together) as long as they were all encrypted with THIS product's key --
+-- see product_folders below. There's no folder_path here directly; a
+-- product with zero rows in product_folders is never actually created by
+-- the admin UI (every product needs at least one folder) -- that's what a
+-- NULL licenses.product_id means instead, see below.
 CREATE TABLE IF NOT EXISTS products (
     id INT AUTO_INCREMENT PRIMARY KEY,
     slug VARCHAR(64) NOT NULL UNIQUE,
     name VARCHAR(255) NOT NULL DEFAULT '',
-    folder_path VARCHAR(255) NOT NULL UNIQUE,
     encryption_key VARCHAR(255) NOT NULL,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- One row per folder a product unlocks. folder_path is globally UNIQUE
+-- (not just per-product) -- a folder can only ever belong to one product,
+-- so its content only ever needs one key, no matter how many products
+-- exist.
+CREATE TABLE IF NOT EXISTS product_folders (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    product_id INT NOT NULL,
+    folder_path VARCHAR(255) NOT NULL UNIQUE,
+    FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS licenses (

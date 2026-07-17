@@ -102,6 +102,18 @@ if ($method === 'GET' && $path === '/admin/products') {
     json_out($result['status'], $result['body']);
 }
 
+if ($method === 'GET' && $path === '/admin/repo-folders') {
+    require_admin_token();
+
+    $controller = new AdminController();
+    try {
+        $result = $controller->listRepoFolders();
+    } catch (Throwable $e) {
+        json_out(500, ['ok' => false, 'error' => 'server_error']);
+    }
+    json_out($result['status'], $result['body']);
+}
+
 if ($method === 'POST' && $path === '/admin/products') {
     require_admin_token();
     $raw = file_get_contents('php://input');

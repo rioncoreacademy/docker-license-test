@@ -26,7 +26,7 @@ class LicenseController
         if ($stmt->fetch()) {
             $db->prepare('UPDATE activations SET last_seen_at = NOW() WHERE license_id = ? AND fingerprint = ?')
                 ->execute([$license['id'], $fingerprint]);
-            return ['status' => 200, 'body' => ['ok' => true, 'already_activated' => true] + $this->resolveProductFields($license)];
+            return ['status' => 200, 'body' => ['ok' => true, 'already_activated' => true] + $this->resolveProductFields($db, $license)];
         }
 
         $stmt = $db->prepare('SELECT COUNT(*) AS n FROM activations WHERE license_id = ?');
@@ -40,7 +40,7 @@ class LicenseController
         $db->prepare('INSERT INTO activations (license_id, fingerprint) VALUES (?, ?)')
             ->execute([$license['id'], $fingerprint]);
 
-        return ['status' => 200, 'body' => ['ok' => true, 'already_activated' => false] + $this->resolveProductFields($license)];
+        return ['status' => 200, 'body' => ['ok' => true, 'already_activated' => false] + $this->resolveProductFields($db, $license)];
     }
 
     public function validate(array $body): array
@@ -73,24 +73,31 @@ class LicenseController
         return ['status' => 200, 'body' => [
             'ok' => true,
             'expiry_date' => $license['expiry_date'],
-        ] + $this->resolveProductFields($license)];
+        ] + $this->resolveProductFields($db, $license)];
     }
 
     /**
-     * encryption_key/product_folder for a license row already joined to its
-     * product (see findLicense()). No product assigned (product_id NULL,
-     * i.e. every license issued before products existed) falls back to
-     * DEFAULT_ENCRYPTION_KEY and no folder restriction -- same behavior as
-     * before products existed at all.
+     * encryption_key/product_folders for a license row already joined to
+     * its product (see findLicense()). No product assigned (product_id
+     * NULL, i.e. every license issued before products existed) falls back
+     * to DEFAULT_ENCRYPTION_KEY and no folder restriction -- same behavior
+     * as before products existed at all.
      */
-    private function resolveProductFields(array $license): array
+    private function resolveProductFields(PDO $db, array $license): array
     {
         $key = $license['product_encryption_key']
             ?? (getenv('DEFAULT_ENCRYPTION_KEY') ?: (defined('DEFAULT_ENCRYPTION_KEY') ? DEFAULT_ENCRYPTION_KEY : ''));
 
+        $folders = [];
+        if ($license['product_id'] !== null) {
+            $stmt = $db->prepare('SELECT folder_path FROM product_folders WHERE product_id = ? ORDER BY folder_path');
+            $stmt->execute([$license['product_id']]);
+            $folders = array_column($stmt->fetchAll(), 'folder_path');
+        }
+
         return [
             'encryption_key' => $key,
-            'product_folder' => $license['product_folder'] ?? '',
+            'product_folders' => $folders,
         ];
     }
 
@@ -113,7 +120,7 @@ class LicenseController
     private function findLicense(PDO $db, string $key)
     {
         $stmt = $db->prepare('
-            SELECT l.*, p.folder_path AS product_folder, p.encryption_key AS product_encryption_key
+            SELECT l.*, p.encryption_key AS product_encryption_key
             FROM licenses l
             LEFT JOIN products p ON p.id = l.product_id
             WHERE l.license_key = ?

@@ -37,7 +37,7 @@ class AdminController
 
         $product = null;
         if ($productId !== null) {
-            $stmt = $db->prepare('SELECT id, slug, name, folder_path FROM products WHERE id = ?');
+            $stmt = $db->prepare('SELECT id, slug, name FROM products WHERE id = ?');
             $stmt->execute([$productId]);
             $product = $stmt->fetch();
             if ($product === false) {
@@ -100,10 +100,10 @@ class AdminController
             'seats' => $seats,
             'expiry_date' => $expires,
             'product' => $product !== null ? [
-                'id'          => (int) $product['id'],
-                'slug'        => $product['slug'],
-                'name'        => $product['name'],
-                'folder_path' => $product['folder_path'],
+                'id'      => (int) $product['id'],
+                'slug'    => $product['slug'],
+                'name'    => $product['name'],
+                'folders' => $this->productFolders($db, (int) $product['id']),
             ] : null,
             'existing_licenses' => array_map(static fn($l) => [
                 'license_key' => $l['license_key'],
@@ -235,10 +235,10 @@ class AdminController
                 'created_at' => $e['created_at'],
             ], $events),
             'product' => $license['product_id'] !== null ? [
-                'id'          => (int) $license['product_id'],
-                'slug'        => $license['product_slug'],
-                'name'        => $license['product_name'],
-                'folder_path' => $license['product_folder_path'],
+                'id'      => (int) $license['product_id'],
+                'slug'    => $license['product_slug'],
+                'name'    => $license['product_name'],
+                'folders' => $this->productFolders($db, (int) $license['product_id']),
             ] : null,
             'related_by_fingerprint' => array_map(static fn($l) => [
                 'license_key'    => $l['license_key'],
@@ -252,7 +252,7 @@ class AdminController
     private function findByKey(PDO $db, string $key)
     {
         $stmt = $db->prepare('
-            SELECT l.*, p.slug AS product_slug, p.name AS product_name, p.folder_path AS product_folder_path
+            SELECT l.*, p.slug AS product_slug, p.name AS product_name
             FROM licenses l
             LEFT JOIN products p ON p.id = l.product_id
             WHERE l.license_key = ?
@@ -261,37 +261,93 @@ class AdminController
         return $stmt->fetch();
     }
 
+    /** Folder paths bundled into a product, alphabetical. */
+    private function productFolders(PDO $db, int $productId): array
+    {
+        $stmt = $db->prepare('SELECT folder_path FROM product_folders WHERE product_id = ? ORDER BY folder_path');
+        $stmt->execute([$productId]);
+        return array_column($stmt->fetchAll(), 'folder_path');
+    }
+
     /** GET /admin/products -- for populating the Generate form's product dropdown. */
     public function listProducts(): array
     {
-        $stmt = Database::get()->query('SELECT id, slug, name, folder_path FROM products ORDER BY name, slug');
+        $db = Database::get();
+        $products = $db->query('SELECT id, slug, name FROM products ORDER BY name, slug')->fetchAll();
+        foreach ($products as &$p) {
+            $p['folders'] = $this->productFolders($db, (int) $p['id']);
+        }
+        unset($p);
         // Deliberately not selecting encryption_key here -- shown once, at
         // creation, same as license_key itself.
-        return ['status' => 200, 'body' => ['ok' => true, 'products' => $stmt->fetchAll()]];
+        return ['status' => 200, 'body' => ['ok' => true, 'products' => $products]];
     }
 
-    /** POST /admin/products -- create a new product (folder + its decryption key). */
+    /** GET /admin/repo-folders -- top-level folders in tarang2p1-files, for the "Add new product" picker. */
+    public function listRepoFolders(): array
+    {
+        $ctx = stream_context_create(['http' => [
+            'method' => 'GET',
+            'header' => "User-Agent: docker-license-test-admin\r\n",
+            'timeout' => 8,
+        ]]);
+        $raw = @file_get_contents('https://api.github.com/repos/rioncoreacademy/tarang2p1-files/contents/', false, $ctx);
+        if ($raw === false) {
+            return ['status' => 502, 'body' => ['ok' => false, 'error' => 'github_unreachable']];
+        }
+
+        $entries = json_decode($raw, true);
+        if (!is_array($entries)) {
+            return ['status' => 502, 'body' => ['ok' => false, 'error' => 'github_bad_response']];
+        }
+
+        $folders = [];
+        foreach ($entries as $e) {
+            if (($e['type'] ?? '') === 'dir') {
+                $folders[] = $e['name'];
+            }
+        }
+        sort($folders);
+
+        return ['status' => 200, 'body' => ['ok' => true, 'folders' => $folders]];
+    }
+
+    /** POST /admin/products -- create a new product (one or more folders + their shared decryption key). */
     public function createProduct(array $body): array
     {
         $slug = trim((string) ($body['slug'] ?? ''));
         $name = trim((string) ($body['name'] ?? ''));
-        $folderPath = trim((string) ($body['folder_path'] ?? ''));
         $encryptionKey = trim((string) ($body['encryption_key'] ?? ''));
+        $folderPaths = array_values(array_unique(array_filter(array_map(
+            static fn($f) => trim((string) $f),
+            is_array($body['folder_paths'] ?? null) ? $body['folder_paths'] : []
+        ))));
 
         if (!preg_match('/^[a-z0-9_-]+$/', $slug)) {
             return ['status' => 400, 'body' => ['ok' => false, 'error' => 'invalid_slug']];
         }
-        if ($folderPath === '' || $encryptionKey === '') {
-            return ['status' => 400, 'body' => ['ok' => false, 'error' => 'missing_folder_path_or_encryption_key']];
+        if (empty($folderPaths) || $encryptionKey === '') {
+            return ['status' => 400, 'body' => ['ok' => false, 'error' => 'missing_folder_paths_or_encryption_key']];
         }
 
         $db = Database::get();
         try {
-            $db->prepare('INSERT INTO products (slug, name, folder_path, encryption_key) VALUES (?, ?, ?, ?)')
-                ->execute([$slug, $name, $folderPath, $encryptionKey]);
+            $db->beginTransaction();
+            $db->prepare('INSERT INTO products (slug, name, encryption_key) VALUES (?, ?, ?)')
+                ->execute([$slug, $name, $encryptionKey]);
+            $productId = (int) $db->lastInsertId();
+
+            $stmt = $db->prepare('INSERT INTO product_folders (product_id, folder_path) VALUES (?, ?)');
+            foreach ($folderPaths as $folderPath) {
+                $stmt->execute([$productId, $folderPath]);
+            }
+            $db->commit();
         } catch (PDOException $e) {
-            // Unique constraint on slug or folder_path (see db/init.sql) --
-            // most likely someone re-creating an existing product by mistake.
+            $db->rollBack();
+            // Unique constraint on slug or a folder_path already claimed by
+            // another product (see db/init.sql) -- most likely re-creating
+            // an existing product, or bundling a folder that's already
+            // spoken for elsewhere.
             if ((int) $e->getCode() === 23000) {
                 return ['status' => 400, 'body' => ['ok' => false, 'error' => 'slug_or_folder_already_exists']];
             }
@@ -300,10 +356,10 @@ class AdminController
 
         return ['status' => 200, 'body' => [
             'ok' => true,
-            'id' => (int) $db->lastInsertId(),
+            'id' => $productId,
             'slug' => $slug,
             'name' => $name,
-            'folder_path' => $folderPath,
+            'folders' => $folderPaths,
             'encryption_key' => $encryptionKey,
         ]];
     }
