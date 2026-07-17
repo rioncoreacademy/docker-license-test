@@ -338,7 +338,15 @@ document.getElementById('genSubmit').addEventListener('click', async () => {
       Consider extending one of those instead of tracking two.</div>`;
   }
 
-  const runCmd = `Tarang2p1.exe start -licensekey ${r.license_key} -licenseapi ${apiOrigin()}`;
+  // "update" not "start": if the customer already ran Tarang2p1.exe before
+  // (an old/expired license, or this is a renewal), "start" would silently
+  // reuse their existing container as-is -- new -licensekey/-licenseapi
+  // flags are ignored entirely once a container already exists (see
+  // lab.go's startProject: existing+running just reopens the browser to
+  // it, no env var changes). "update" always removes and recreates the
+  // container with whatever flags are passed, so it's correct for a
+  // first-time customer AND a renewal in one command.
+  const runCmd = `Tarang2p1.exe update -licensekey ${r.license_key} -licenseapi ${apiOrigin()}`;
   const productLine = r.product
     ? `<div>
         Scoped to product <strong>${esc(r.product.name || r.product.slug)}</strong>
