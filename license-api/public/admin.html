@@ -317,11 +317,16 @@ document.getElementById('genSubmit').addEventListener('click', async () => {
     </div>
     <div>Send this to the customer along with <strong>Tarang2p1.exe</strong>. They run:</div>
     <div class="instructions">${runCmd}</div>
+    <button type="button" class="small secondary" id="copyCmdBtn">Copy command</button>
     <div class="note">This seat locks to whichever machine activates it first — sharing the key with a second
     person won't work once the seat is used. Local testing note: if Tarang2p1.exe is pulling an image on
     this same machine, use <code>http://host.docker.internal:${window.location.port || 80}</code> instead of
     ${apiOrigin()} for -licenseapi.</div>
   `;
+
+  document.getElementById('copyCmdBtn').addEventListener('click', () => {
+    navigator.clipboard.writeText(runCmd);
+  });
 });
 
 async function runLookup(key) {
