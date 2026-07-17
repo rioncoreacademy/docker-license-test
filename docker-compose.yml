@@ -19,6 +19,11 @@ services:
       retries: 10
 
   api:
+    # `docker compose up -d` (no flags) pulls this published image instead
+    # of compiling locally -- CI already builds+publishes it on every push
+    # (.github/workflows/publish-image.yml). `docker compose up --build -d`
+    # still works too, for iterating on license-api/ source directly.
+    image: ghcr.io/rioncoreacademy/docker-license-test:latest
     build: ./license-api
     restart: unless-stopped
     environment:
