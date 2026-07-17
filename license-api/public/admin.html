@@ -70,6 +70,11 @@
     padding: 12px 14px; font-family: var(--mono); font-size: 12.5px;
     white-space: pre-wrap; word-break: break-all; color: var(--ink);
   }
+  .cmd-line {
+    display: flex; align-items: center; gap: 10px; margin: 8px 0 14px;
+  }
+  .cmd-line .instructions { flex: 1; margin: 0; }
+  .cmd-line button { flex-shrink: 0; margin: 0; padding: 5px 10px; font-size: 12px; }
   .note { color: var(--muted); font-size: 12px; margin-top: 8px; }
   .field-error { color: var(--err); font-size: 12px; margin-top: 4px; }
   table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 12.5px; }
@@ -316,8 +321,10 @@ document.getElementById('genSubmit').addEventListener('click', async () => {
       <button type="button" class="small" onclick="navigator.clipboard.writeText('${r.license_key}')">Copy key</button>
     </div>
     <div>Send this to the customer along with <strong>Tarang2p1.exe</strong>. They run:</div>
-    <div class="instructions">${runCmd}</div>
-    <button type="button" class="small secondary" id="copyCmdBtn">Copy command</button>
+    <div class="cmd-line">
+      <div class="instructions">${runCmd}</div>
+      <button type="button" class="small secondary" id="copyCmdBtn">Copy command</button>
+    </div>
     <div class="note">This seat locks to whichever machine activates it first — sharing the key with a second
     person won't work once the seat is used. Local testing note: if Tarang2p1.exe is pulling an image on
     this same machine, use <code>http://host.docker.internal:${window.location.port || 80}</code> instead of
